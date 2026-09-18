@@ -122,9 +122,10 @@
   }
 
   // 写真を1枚撮る/選ぶ → {id, thumb} か null。本体は photos ストアへ
-  U.pickPhoto = function () {
+  // opts.gallery = true なら、カメラを直接開かず端末の画像から選ぶ
+  U.pickPhoto = function (opts) {
     return new Promise((resolve) => {
-      const input = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
+      const input = h('input', { type: 'file', accept: 'image/*', capture: (opts && opts.gallery) ? null : 'environment', style: 'display:none' });
       document.body.appendChild(input);
       input.addEventListener('cancel', () => { input.remove(); resolve(null); });
       input.addEventListener('change', async () => {

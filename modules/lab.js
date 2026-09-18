@@ -90,7 +90,13 @@
     let got = 0;
     const counter = new TransformStream({ transform(chunk, ctl) { got += chunk.byteLength; onProgress(got, total); ctl.enqueue(chunk); } });
     const cache = await caches.open(CACHE);
-    await cache.put(modelUrl, new Response(res.body.pipeThrough(counter), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(total) } }));
+    try {
+      await cache.put(modelUrl, new Response(res.body.pipeThrough(counter), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(total) } }));
+    } catch (e) {
+      // 通信が途中で切れる・空き容量が足りない等（PCの試験でも1度起きた）。中途半端な保存は残さない
+      await cache.delete(modelUrl);
+      throw new Error('モデルの保存が途中で止まりました（' + Math.round(got / 1e6) + ' / ' + Math.round(total / 1e6) + ' MB）。通信と空き容量を確認して、もう一度「モデルを入手」を押してください。[' + e.message + ']');
+    }
     log('モデル入手完了: ' + Math.round(got / 1e6) + ' MB / ' + sec(t0) + ' 秒');
   };
 

@@ -73,7 +73,18 @@
             if (ref) { stay.photos.push(ref); save(); }
           }
         }, '📷', h('span', null, '撮る')) : null,
-        (!stay.photos.length && mode === 'done') ? h('span', { class: 'sub' }, 'なし') : null)));
+        mode !== 'done' ? h('button', {
+          class: 'photo-add lg', onclick: async () => {
+            const ref = await U.pickPhoto({ gallery: true });
+            if (ref) { stay.photos.push(ref); save(); }
+          }
+        }, '🖼', h('span', null, '画像から')) : null,
+        (!stay.photos.length && mode === 'done') ? h('span', { class: 'sub' }, 'なし') : null),
+      (window.PickFrom && editable && stay.photos.length) ? h('button', {
+        class: 'btn primary pickbtn',
+        onclick: () => window.PickFrom.open(stay, stay.photos[stay.photos.length - 1], () => App.refresh())
+      }, '👆 この写真の上で品を囲んで登録する') : null,
+      (window.PickFrom && editable && !stay.photos.length) ? h('div', { class: 'sub' }, '荷物を広げて1枚撮ると、写真の上で品を指で囲んで登録できます。') : null));
 
     // ---- 品を足すパネル ----
     if (editable) root.appendChild(addPanel());
@@ -298,6 +309,9 @@
               App.refresh();
             }
           }, '写真を削除') : null,
+          (window.PickFrom && editable && list === stay.photos) ? h('button', {
+            class: 'btn', onclick: () => { close(); window.PickFrom.open(stay, ref, () => App.refresh()); }
+          }, '👆 この写真から品を選ぶ') : null,
           h('button', { class: 'btn primary', onclick: () => close() }, '閉じる')));
       close = U.modal(body, { wide: true });
     }
@@ -324,6 +338,12 @@
             if (ref) { it.photos.push(ref); await saveQuiet(); drawPhotos(); }
           }
         }, '📷', h('span', null, '撮る')));
+        if (!readOnly) strip.appendChild(h('button', {
+          class: 'photo-add lg', onclick: async () => {
+            const ref = await U.pickPhoto({ gallery: true });
+            if (ref) { it.photos.push(ref); await saveQuiet(); drawPhotos(); }
+          }
+        }, '🖼', h('span', null, '画像から')));
       };
       drawPhotos();
 
