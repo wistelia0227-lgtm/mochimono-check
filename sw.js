@@ -1,6 +1,6 @@
 // オフラインでも開けるようにアプリ本体をキャッシュする。データ(IndexedDB)には触れない。
 // ファイルを更新したら VERSION を上げる（古いキャッシュが捨てられる）。
-const VERSION = 'mochimono-v0.5';
+const VERSION = 'mochimono-v0.6';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/util.js', 'js/db.js', 'js/master.js', 'js/model.js', 'js/app.js',

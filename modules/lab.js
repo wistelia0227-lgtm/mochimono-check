@@ -73,33 +73,119 @@
     log('モデルの保存: ' + ((await Lab.cached()) ? '済み' : 'まだ'));
   };
 
+
+  // ---- 2. モデルを入手して端末に保存 ----
+  // スマホでは画面が消えると通信が止まる(2026-09-19 実機報告)。対策は3つ:
+  //  ①入手中は画面を消さない(Wake Lock) ②小分け(PART)で保存し、止まっても続きから ③失敗したら画面が戻るのを待って自動で再開
+  const PART = 32 * 1024 * 1024;
+  const partKey = (i) => location.origin + '/__labmodel/' + encodeURIComponent(modelUrl) + '/' + i;
+  const metaKey = () => location.origin + '/__labmodel/' + encodeURIComponent(modelUrl) + '/meta';
+
+  async function readMeta(cache) {
+    const r = await cache.match(metaKey());
+    return r ? r.json() : null;
+  }
+  const writeMeta = (cache, meta) => cache.put(metaKey(), new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
+
   Lab.cached = async function () {
     if (!window.caches) return false;
-    return !!(await (await caches.open(CACHE)).match(modelUrl));
+    const cache = await caches.open(CACHE);
+    if (await cache.match(modelUrl)) return true; // 旧版(一括保存)で入手済みの端末
+    const meta = await readMeta(cache);
+    return !!(meta && meta.complete);
   };
 
-  // ---- 2. モデルを入手して端末に保存（進み具合つき） ----
-  Lab.download = async function (onProgress) {
+  // 保存済みの小分けの数（続きから再開する位置）
+  async function partsDone(cache, n) {
+    let i = 0;
+    while (i < n && (await cache.match(partKey(i)))) i++;
+    return i;
+  }
+
+  function waitUntilActive() { // 画面が戻り、通信がつながるまで待つ
+    return new Promise((resolve) => {
+      const ok = () => document.visibilityState === 'visible' && navigator.onLine !== false;
+      if (ok()) return resolve();
+      const check = () => { if (ok()) { document.removeEventListener('visibilitychange', check); window.removeEventListener('online', check); resolve(); } };
+      document.addEventListener('visibilitychange', check);
+      window.addEventListener('online', check);
+    });
+  }
+
+  let wakeLock = null;
+  async function keepAwake(on) {
+    try {
+      if (on && navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+      if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch (e) { /* 対応していない端末ではそのまま進める */ }
+  }
+
+  Lab.download = async function (onProgress, opts) {
     if (!window.caches) throw new Error('このアドレスでは保存機能(Cache)が使えません（https が必要）');
     if (await Lab.cached()) { log('モデルは入手済みです'); return; }
     const t0 = performance.now();
-    log('■ モデル入手開始: ' + modelUrl);
-    const res = await fetch(modelUrl);
-    if (!res.ok || !res.body) throw new Error('入手できません (HTTP ' + res.status + ')');
-    const total = Number(res.headers.get('content-length')) || 0;
-    let got = 0;
-    const counter = new TransformStream({ transform(chunk, ctl) { got += chunk.byteLength; onProgress(got, total); ctl.enqueue(chunk); } });
     const cache = await caches.open(CACHE);
+    if (navigator.storage && navigator.storage.persist) { try { await navigator.storage.persist(); } catch (e) { /* 無視 */ } }
+
+    const head = await fetch(modelUrl, { method: 'HEAD' });
+    const total = Number(head.headers.get('content-length')) || 0;
+    if (!head.ok || !total) throw new Error('入手できません (HTTP ' + head.status + ')');
+    const n = Math.ceil(total / PART);
+    let meta = await readMeta(cache);
+    if (!meta || meta.total !== total || meta.part !== PART) { meta = { total: total, part: PART, parts: n, complete: false }; await writeMeta(cache, meta); }
+
+    let i = await partsDone(cache, n);
+    log('■ モデル入手開始: ' + Math.round(total / 1e6) + ' MB を ' + n + ' 個に分けて保存' + (i ? '（' + i + ' 個目まで保存済み。続きから）' : ''));
+    const regrab = () => { if (document.visibilityState === 'visible') keepAwake(true); }; // 画面が戻ったら Wake Lock を取り直す
+    document.addEventListener('visibilitychange', regrab);
+    await keepAwake(true);
     try {
-      await cache.put(modelUrl, new Response(res.body.pipeThrough(counter), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(total) } }));
-    } catch (e) {
-      // 通信が途中で切れる・空き容量が足りない等（PCの試験でも1度起きた）。中途半端な保存は残さない
-      await cache.delete(modelUrl);
-      throw new Error('モデルの保存が途中で止まりました（' + Math.round(got / 1e6) + ' / ' + Math.round(total / 1e6) + ' MB）。通信と空き容量を確認して、もう一度「モデルを入手」を押してください。[' + e.message + ']');
+      let fails = 0;
+      while (i < n) {
+        if (opts && opts.stopAfter && i >= opts.stopAfter) throw new Error('（試験用の中断）');
+        const from = i * PART, to = Math.min(total, from + PART) - 1;
+        try {
+          const res = await fetch(modelUrl, { headers: { Range: 'bytes=' + from + '-' + to } });
+          if (res.status !== 206) throw new Error('配布元が分割に応じません (HTTP ' + res.status + ')');
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength !== to - from + 1) throw new Error('受け取った量が足りません');
+          await cache.put(partKey(i), new Response(buf, { headers: { 'content-type': 'application/octet-stream' } }));
+          i++; fails = 0;
+          onProgress(Math.min(total, i * PART), total);
+        } catch (e) {
+          fails++;
+          log('  ' + (i + 1) + ' 個目で中断（' + e.message + '）→ ' + (fails <= 8 ? '自動で再開します' : '中止'));
+          if (fails > 8 || (opts && opts.stopAfter)) throw new Error('モデルの入手が止まりました（' + Math.round(i * PART / 1e6) + ' / ' + Math.round(total / 1e6) + ' MB まで保存済み）。もう一度「モデルを入手」を押すと続きから再開します。[' + e.message + ']');
+          await waitUntilActive();
+          await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * fails)));
+        }
+      }
+      meta.complete = true;
+      await writeMeta(cache, meta);
+      log('モデル入手完了: ' + Math.round(total / 1e6) + ' MB / ' + sec(t0) + ' 秒');
+    } finally {
+      document.removeEventListener('visibilitychange', regrab);
+      await keepAwake(false);
     }
-    log('モデル入手完了: ' + Math.round(got / 1e6) + ' MB / ' + sec(t0) + ' 秒');
   };
 
+  // 小分けを順につないで1本の流れにする（2.9GBを一度にメモリへ載せない）
+  async function modelReader() {
+    const cache = await caches.open(CACHE);
+    const whole = await cache.match(modelUrl);
+    if (whole) return whole.body.getReader();
+    const meta = await readMeta(cache);
+    if (!meta || !meta.complete) throw new Error('先にモデルを入手してください');
+    let i = 0;
+    return new ReadableStream({
+      async pull(ctl) {
+        if (i >= meta.parts) { ctl.close(); return; }
+        const r = await cache.match(partKey(i++));
+        if (!r) { ctl.error(new Error('保存したモデルが欠けています。削除して入手し直してください')); return; }
+        ctl.enqueue(new Uint8Array(await r.arrayBuffer()));
+      }
+    }).getReader();
+  }
   Lab.removeModel = async function () {
     if (Lab.llm && Lab.llm.close) { try { Lab.llm.close(); } catch (e) { /* 無視 */ } }
     Lab.llm = null;
@@ -123,10 +209,9 @@
     log('■ モデル読み込み開始');
     const rt = await loadRuntime();
     const genai = await rt.FilesetResolver.forGenAiTasks(MP_BASE + '/wasm');
-    const hit = await (await caches.open(CACHE)).match(modelUrl);
-    if (!hit) throw new Error('先にモデルを入手してください');
+    const reader = await modelReader();
     Lab.llm = await rt.LlmInference.createFromOptions(genai, {
-      baseOptions: { modelAssetBuffer: hit.body.getReader() }, // 2.9GBを一度にメモリへ載せず、流し込みで渡す
+      baseOptions: { modelAssetBuffer: reader },
       maxTokens: 2048, topK: 1, temperature: 0.1, randomSeed: 1, maxNumImages: 1
     });
     log('モデル読み込み完了: ' + sec(t0) + ' 秒');
@@ -187,7 +272,8 @@
       h('div', { class: 'topbar-title' }, h('h1', null, '実験室：写真の認識'))));
     root.appendChild(h('div', { class: 'card' },
       h('p', null, 'この端末の中だけで、写真から持ち物を読み取れるかを実際に試します。写真は端末の外へ出ません。'),
-      h('p', { class: 'sub' }, '最初にAIモデル（約2.9GB）を入手します。Wi-Fiで行ってください。入手は1回だけで、端末に保存されます。')));
+      h('p', { class: 'sub' }, '最初にAIモデル（約2.9GB）を入手します。Wi-Fiで行ってください。入手は1回だけで、端末に保存されます。'),
+      h('p', { class: 'sub' }, '入手中は画面が消えないようにしています。別のアプリに切り替えたり通信が切れたりして止まっても、保存済みの分は残り、この画面に戻ると自動で続きから再開します。')));
 
     const bar = h('div', { class: 'progress' }, h('div', { class: 'progress-in' }));
     const barText = h('div', { class: 'sub' });
