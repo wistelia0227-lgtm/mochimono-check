@@ -104,7 +104,7 @@
       aiBtn.addEventListener('click', async () => {
         aiBtn.disabled = true; aiBtn.textContent = '調べています…（初回は読み込みに時間がかかります）';
         try {
-          const res = await window.Lab.runOnImage(crop);
+          const res = await window.Lab.runOnImage(crop, { one: true, vocab: master.items.map((m) => m.name) });
           const it = res.items && res.items[0];
           if (it) {
             name.value = it.name; note.value = note.value || it.note; qty = it.qty; qtyEl.textContent = String(qty);

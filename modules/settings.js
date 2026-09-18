@@ -24,7 +24,7 @@
       app: 'mochimono-check', format: 1, exportedAt: new Date().toISOString(),
       residents: await DB.getAll('residents'), stays: await DB.getAll('stays'),
       photos: await DB.getAll('photos'),
-      meta: (await DB.getAll('meta')).filter((m) => m.key.indexOf('secret.') !== 0) // APIキー等はファイルに出さない
+      meta: (await DB.getAll('meta')).filter((m) => m.key.indexOf('secret.') !== 0 && m.key.indexOf('guess:') !== 0) // APIキーやAIの一時的な提案はファイルに出さない
     };
   };
   Backup.importData = async function (data) {

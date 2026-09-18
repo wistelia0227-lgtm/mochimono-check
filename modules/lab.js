@@ -218,13 +218,21 @@
   };
 
   // ---- 4. 写真1枚を認識 ----
-  Lab.runOnImage = async function (source) { // source: URL文字列 / canvas / img
+  // 1枚に1種類だけ写した写真用の指示。品目の一覧を渡して、表記をそれに寄せさせる
+  function promptOne(vocab) {
+    return 'これは介護施設のショートステイに利用者が持参した持ち物を、1種類だけ写した写真です。写真の中心にある持ち物を答えてください。\n' +
+      '次の書式の1行だけで答える（前置きや説明は書かない）:\n品名|個数|色や特徴\n例:\n靴下|2|黒\n' +
+      '背景の机や床、手は数えない。靴下は1足を1と数える。\n' +
+      (vocab && vocab.length ? '品名は、次の一覧に当てはまるものがあれば必ずその表記を使う。無ければ短い日本語の品名にする:\n' + vocab.join('、') : '');
+  }
+
+  Lab.runOnImage = async function (source, opts) { // source: URL文字列 / canvas / img。opts.one = 1種類だけの写真
     await Lab.load();
     const t0 = performance.now();
     log('■ 認識開始');
     let soFar = '', stopped = false;
     let text = await Lab.llm.generateResponse(
-      ['<start_of_turn>user\n', { imageSource: source }, PROMPT, '<end_of_turn>\n<start_of_turn>model\n'],
+      ['<start_of_turn>user\n', { imageSource: source }, (opts && opts.one) ? promptOne(opts.vocab) : PROMPT, '<end_of_turn>\n<start_of_turn>model\n'],
       (partial) => {
         soFar += partial;
         if (!stopped && isLooping(soFar) && Lab.llm.cancelProcessing) { stopped = true; try { Lab.llm.cancelProcessing(); } catch (e) { /* 止められない版もある */ } }

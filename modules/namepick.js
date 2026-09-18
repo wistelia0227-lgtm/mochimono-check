@@ -6,6 +6,57 @@
   const U = window.U, h = U.h, DB = window.DB;
   const NamePick = {};
 
+  // ---- AIの提案を裏で順に作る ----
+  // 提案は stays とは別の場所(meta の 'guess:品ID')に置く。画面側の保存と書き込みがぶつからないようにするため。
+  const queue = [], listeners = {};
+  let running = false;
+  const gkey = (id) => 'guess:' + id;
+
+  function matchMaster(master, guess) { // AIの言い方を品目の一覧に寄せる（完全一致 → 含む/含まれる）
+    const g = String(guess || '').trim();
+    if (!g) return null;
+    return master.items.find((m) => m.name === g) ||
+      master.items.find((m) => { const base = m.name.replace(/[（(].*$/, ''); return base.length >= 2 && (g.indexOf(base) >= 0 || base.indexOf(g) >= 0); }) || null;
+  }
+
+  function enqueue(it, first) {
+    if (!it.photos[0]) return;
+    const at = queue.findIndex((q) => q.itemId === it.id);
+    if (at >= 0) { if (!first) return; queue.splice(at, 1); }
+    const job = { itemId: it.id, photoId: it.photos[0].id };
+    if (first) queue.unshift(job); else queue.push(job);
+    pump();
+  }
+
+  async function pump() {
+    if (running) return;
+    running = true;
+    try {
+      const master = await window.Master.load();
+      const vocab = master.items.map((m) => m.name);
+      while (queue.length) {
+        const job = queue.shift();
+        let guess = await DB.getMeta(gkey(job.itemId), null);
+        if (!guess) {
+          guess = { none: true };
+          try {
+            const rec = await DB.get('photos', job.photoId);
+            if (rec) { const res = await window.Lab.runOnImage(await loadImg(rec.data), { one: true, vocab: vocab }); if (res.items[0]) guess = res.items[0]; }
+          } catch (e) { guess = { none: true, error: e && e.message || String(e) }; }
+          await DB.setMeta(gkey(job.itemId), guess);
+        }
+        (listeners[job.itemId] || []).forEach((fn) => fn(guess));
+        delete listeners[job.itemId];
+      }
+    } finally { running = false; }
+  }
+
+  // 撮り終えた直後に呼ぶ: 端末にAIモデルがあれば、未設定の品を裏で順に調べ始める
+  NamePick.prefetch = async function (items) {
+    if (!(window.Lab && window.Lab.cached && (await window.Lab.cached()))) return;
+    items.forEach((it) => enqueue(it, false));
+  };
+
   function loadImg(src) {
     return new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error('写真を開けません')); i.src = src; });
   }
@@ -46,28 +97,31 @@
       };
       drawChips();
 
-      const aiBtn = h('button', { class: 'btn small' }, '✨ AIに品名を聞く');
-      aiBtn.hidden = true;
-      const askAi = async () => {
-        aiBtn.disabled = true; aiBtn.textContent = '調べています…';
-        try {
-          const res = await window.Lab.runOnImage(await loadImg(pic.src));
-          const g = res.items && res.items[0];
-          if (g && !name.value.trim()) { // 人が先に入力していたら上書きしない
-            name.value = g.name; if (!note.value) note.value = g.note; setQty(g.qty);
-            const m = master.items.find((x) => x.name === g.name);
-            if (m) { curCat = master.cats.find((c) => c.id === m.catId) || curCat; consumable = m.consumable; }
-            drawChips();
-          } else if (!g) U.toast('読み取れませんでした。手で選んでください', true);
-        } catch (e) { U.toast('AIを使えませんでした: ' + e.message, true); }
-        aiBtn.disabled = false; aiBtn.textContent = '✨ AIに品名を聞く';
+      // AIの提案: 裏の順番待ち(pump)が先に調べてあればすぐ入る。まだなら、この品を先頭に回して待つ
+      const aiLine = h('div', { class: 'sub ai-line' });
+      let open = true;
+      const apply = (g) => {
+        if (!open) return;
+        if (!g || g.none) { aiLine.textContent = g && g.error ? '✨ AIを使えませんでした（' + g.error + '）' : '✨ AIは読み取れませんでした。手で選んでください'; return; }
+        const m = matchMaster(master, g.name);
+        const label = (m ? m.name : g.name) + ' ×' + g.qty + (g.note ? '（' + g.note + '）' : '');
+        if (name.value.trim()) { aiLine.textContent = '✨ AIの提案: ' + label; return; } // 人が先に入力していたら上書きしない
+        name.value = m ? m.name : g.name;
+        if (!note.value) note.value = g.note || '';
+        setQty(g.qty || 1);
+        if (m) { curCat = master.cats.find((c) => c.id === m.catId) || curCat; consumable = m.consumable; }
+        drawChips();
+        aiLine.textContent = '✨ AIの提案を入れました: ' + label + '　違っていたら直してください';
       };
-      aiBtn.addEventListener('click', askAi);
-      if (window.Lab && window.Lab.cached) window.Lab.cached().then((ok) => {
-        aiBtn.hidden = !ok;
-        if (ok && window.Lab.llm) askAi(); // モデルが既に読み込み済みなら、開いた時点で自動で聞く
+      if (window.Lab && window.Lab.cached && ref) window.Lab.cached().then(async (ok) => {
+        if (!ok) return;
+        const g = await DB.getMeta(gkey(it.id), null);
+        if (g) { apply(g); return; }
+        aiLine.textContent = '✨ AIが調べています…（最初の1枚はモデルの読み込みで時間がかかります）';
+        (listeners[it.id] = listeners[it.id] || []).push(apply);
+        enqueue(it, true);
       });
-
+      const closeAll = () => { open = false; close(); };
       const decide = async () => {
         const nm = name.value.trim();
         if (!nm) { U.toast('品名を選ぶか入力してください', true); return; }
@@ -82,7 +136,8 @@
           it.name = nm; it.cat = curCat.name; it.consumable = consumable; it.qty = qty; it.note = note.value.trim();
           delete it.unnamed;
         }
-        close();
+        await DB.del('meta', gkey(it.id));
+        closeAll();
         next();
       };
       const remove = async () => {
@@ -90,7 +145,8 @@
         stay.items.splice(stay.items.indexOf(it), 1);
         await DB.put('stays', stay);
         await DB.dropPhotosIfUnused(it.photos.map((p) => p.id));
-        close();
+        await DB.del('meta', gkey(it.id));
+        closeAll();
         next();
       };
 
@@ -102,11 +158,11 @@
               h('div', { class: 'stepper' },
                 h('button', { class: 'step', onclick: () => setQty(qty - 1) }, '−'), qtyBtn,
                 h('button', { class: 'step', onclick: () => setQty(qty + 1) }, '＋')),
-              aiBtn))),
+              ), aiLine)),
         h('div', { class: 'modal-btns pf-btns' },
           h('button', { class: 'btn danger', onclick: remove }, '削除'),
           h('span', { class: 'grow' }),
-          h('button', { class: 'btn', onclick: async () => { close(); await DB.put('stays', stay); onDone(); } }, 'あとで'),
+          h('button', { class: 'btn', onclick: async () => { closeAll(); await DB.put('stays', stay); onDone(); } }, 'あとで'),
           h('button', { class: 'btn primary', onclick: decide }, '決定して次へ')),
         cats, chips), { wide: true });
     }

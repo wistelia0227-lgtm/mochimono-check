@@ -151,7 +151,7 @@
                 title: '品を1つずつ撮る', hint: '1枚に1種類。続けて撮って、名前は後でまとめて付けます',
                 onShot: async (ref) => { Model.addUnnamed(stay, ref); await saveQuiet(); }
               });
-              if (n) window.NamePick.run(stay, null, () => App.refresh()); else App.refresh();
+              if (n) { window.NamePick.prefetch(stay.items.filter((x) => x.unnamed)); window.NamePick.run(stay, null, () => App.refresh()); } else App.refresh();
             }
           }, '📷 続けて撮って足す') : h('button', {
             class: 'btn', title: '写真を撮って品として足す', onclick: async () => {
