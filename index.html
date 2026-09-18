@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>持参品チェック</title>
+<meta name="theme-color" content="#e5e7eb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="持参品チェック">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="errbar" hidden></div>
+<main id="root"></main>
+<nav id="tabbar" class="no-print"></nav>
+<div id="toast" hidden></div>
+
+<!-- 基盤 -->
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/master.js"></script>
+<script src="js/model.js"></script>
+<script src="js/app.js"></script>
+
+<!-- 機能モジュール（それぞれ独立。scriptタグを外せばその機能だけ消える） -->
+<script src="modules/stay.js"></script>
+<script src="modules/residents.js"></script>
+<script src="modules/search.js"></script>
+<script src="modules/settings.js"></script>
+<script src="modules/print.js"></script>
+
+<!-- 実験室（削除可能）: 端末内での写真認識を実機で試す。不要ならこのscriptタグと modules/lab.js を消す -->
+<script src="modules/lab.js"></script>
+
+<!-- 開発用（削除可能）: このscriptタグと modules/devtools.js を消せば本番構成 -->
+<script src="modules/devtools.js"></script>
+
+<script>
+App.start();
+// https で配った時だけ、オフラインでも開けるようにする（file:// や http では何もしない）
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('sw', e); });
+}
+</script>
+</body>
+</html>

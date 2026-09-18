@@ -1,0 +1,7 @@
+# 公開しないもの
+# 写真を外部APIへ送る認識モジュール（未接続・未承認のため公開もしない）
+modules/recognize.js
+# PC上のお試し用サーバー（Webには不要）
+serve_lan.py
+phone_test.bat
+__pycache__/
