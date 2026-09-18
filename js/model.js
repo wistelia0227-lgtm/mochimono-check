@@ -89,6 +89,19 @@
     return it;
   };
 
+  // 連続撮影で「写真だけ先に」足した品。名前は後で付ける（unnamed は任意の追加フィールド）
+  Model.addUnnamed = function (st, photoRef) {
+    const n = st.items.filter((it) => it.unnamed).length + 1;
+    const it = {
+      id: U.uid('i'), name: '（名前未設定 ' + n + '）', cat: 'その他', consumable: false,
+      qty: 1, inChecked: true, outQty: null, outChecked: false,
+      note: '', outNote: '', photos: [photoRef],
+      mid: st.status !== 'checkin', addedAt: Date.now(), unnamed: true
+    };
+    st.items.push(it);
+    return it;
+  };
+
   // 退所時の状態: unchecked(未確認) / ok / consumed(消耗品が減った=正常) / short(足りない) / over(多い)
   Model.outState = function (it) {
     if (!it.outChecked || it.outQty == null) return 'unchecked';

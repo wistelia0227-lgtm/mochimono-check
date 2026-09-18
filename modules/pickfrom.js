@@ -86,7 +86,7 @@
       const name = h('input', { class: 'input', type: 'text', placeholder: '品名（下から選ぶか入力）' });
       const note = h('input', { class: 'input', type: 'text', placeholder: '色・柄など（任意）' });
       let qty = 1, consumable = false;
-      const qtyEl = h('span', { class: 'step-n' }, '1');
+      const qtyEl = h('button', { class: 'step-n', onclick: async () => { const v = await U.qtyPad(name.value.trim(), qty, { min: 1 }); if (v != null) { qty = v; qtyEl.textContent = String(qty); } } }, '1');
       const chips = h('div', { class: 'chips pf-chips' });
       const cats = h('div', { class: 'chips cats pf-chips' });
       const drawChips = () => {

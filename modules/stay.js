@@ -69,6 +69,11 @@
         stay.photos.map((p) => h('img', { class: 'thumb lg', src: p.thumb, onclick: () => photoDialog(stay.photos, p, mode !== 'done') })),
         mode !== 'done' ? h('button', {
           class: 'photo-add lg', onclick: async () => {
+            if (window.Camera) { // 続けて何枚でも撮れる
+              await window.Camera.open({ title: '荷物全体の写真', hint: '続けて何枚でも撮れます', onShot: async (ref) => { stay.photos.push(ref); await saveQuiet(); } });
+              App.refresh();
+              return;
+            }
             const ref = await U.pickPhoto();
             if (ref) { stay.photos.push(ref); save(); }
           }
@@ -90,7 +95,18 @@
     if (editable) root.appendChild(addPanel());
 
     // ---- 品の一覧 ----
-    const groups = Model.groupItems(stay.items, window.Master.catOrder(master));
+    // 連続撮影で足した「名前未設定」の品は、名前を付けるまで一番上にまとめて出す
+    const unnamed = (editable && window.NamePick) ? stay.items.filter((it) => it.unnamed) : [];
+    if (unnamed.length) {
+      root.appendChild(h('div', { class: 'card notebox' },
+        h('div', { class: 'notebox-title' }, '名前を付けていない品が ' + unnamed.length + ' 件あります'),
+        h('div', { class: 'photo-strip' }, unnamed.map((it) => h('img', {
+          class: 'thumb lg', src: it.photos[0] ? it.photos[0].thumb : '',
+          onclick: () => window.NamePick.run(stay, it, () => App.refresh())
+        }))),
+        h('button', { class: 'btn primary pickbtn', onclick: () => window.NamePick.run(stay, null, () => App.refresh()) }, '順番に名前を付ける')));
+    }
+    const groups = Model.groupItems(stay.items.filter((it) => unnamed.indexOf(it) < 0), window.Master.catOrder(master));
     if (!stay.items.length) {
       root.appendChild(h('div', { class: 'empty' }, 'まだ品がありません。上の品名をタップして足します。'));
     }
@@ -129,7 +145,15 @@
         })),
         h('div', { class: 'addfree' }, free,
           h('button', { class: 'btn', onclick: addFree }, '足す'),
-          h('button', {
+          (window.Camera && window.NamePick) ? h('button', {
+            class: 'btn', title: '品を1つずつ続けて撮り、後でまとめて名前を付ける', onclick: async () => {
+              const n = await window.Camera.open({
+                title: '品を1つずつ撮る', hint: '1枚に1種類。続けて撮って、名前は後でまとめて付けます',
+                onShot: async (ref) => { Model.addUnnamed(stay, ref); await saveQuiet(); }
+              });
+              if (n) window.NamePick.run(stay, null, () => App.refresh()); else App.refresh();
+            }
+          }, '📷 続けて撮って足す') : h('button', {
             class: 'btn', title: '写真を撮って品として足す', onclick: async () => {
               const ref = await U.pickPhoto();
               if (!ref) return;
@@ -142,10 +166,14 @@
       return panel;
     }
 
-    function stepper(value, onChange, min) {
+    // 数字そのものを押すと個数パッドが開く（−＋を何度も押さなくて済むように）
+    function stepper(value, onChange, min, title) {
       return h('div', { class: 'stepper' },
         h('button', { class: 'step', disabled: value <= min, onclick: () => onChange(value - 1) }, '−'),
-        h('span', { class: 'step-n' }, String(value)),
+        h('button', {
+          class: 'step-n', title: '個数を直接選ぶ',
+          onclick: async () => { const v = await U.qtyPad(title, value, { min: min }); if (v != null && v !== value) onChange(v); }
+        }, String(value)),
         h('button', { class: 'step', onclick: () => onChange(value + 1) }, '＋'));
     }
 
@@ -178,12 +206,12 @@
       let ctl;
       if (mode === 'checkin' || mode === 'staying') {
         ctl = h('div', { class: 'item-ctl' },
-          stepper(it.qty, (v) => { it.qty = v; it.inChecked = true; save(); }, 1),
+          stepper(it.qty, (v) => { it.qty = v; it.inChecked = true; save(); }, 1, it.name),
           !it.inChecked ? h('button', { class: 'btn small primary', onclick: () => { it.inChecked = true; save(); } }, '持参あり') : null);
       } else if (mode === 'checkout') {
         const cur = it.outQty == null ? it.qty : it.outQty;
         ctl = h('div', { class: 'item-ctl' },
-          stepper(cur, (v) => { it.outQty = v; it.outChecked = true; save(); }, 0),
+          stepper(cur, (v) => { it.outQty = v; it.outChecked = true; save(); }, 0, it.name + '（退所時）'),
           h('button', {
             class: 'btn okbtn' + (it.outChecked ? ' on' : ''),
             onclick: () => {
@@ -244,6 +272,11 @@
 
     async function finishCheckIn() {
       if (!stay.items.length && !stay.photos.length) { U.toast('品か写真を1つ以上入れてください', true); return; }
+      const noName = stay.items.filter((it) => it.unnamed).length;
+      if (noName && window.NamePick) {
+        const go = await U.confirm('名前を付けていない品が ' + noName + ' 件あります。先に名前を付けますか？', { okLabel: '名前を付ける', cancelLabel: 'このまま完了へ' });
+        if (go) { window.NamePick.run(stay, null, () => App.refresh()); return; }
+      }
       if (!stay.checkInBy && !(await askNoStaff())) return;
       const un = stay.items.filter((it) => !it.inChecked);
       if (un.length) {

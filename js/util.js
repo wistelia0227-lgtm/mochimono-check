@@ -102,6 +102,25 @@
     });
   };
 
+  // 個数パッド: 大きな数字ボタンで一発で決める → Promise<number|null>
+  U.qtyPad = function (title, current, opts) {
+    const min = (opts && opts.min != null) ? opts.min : 1;
+    return new Promise((resolve) => {
+      let close;
+      const done = (v) => { close(); resolve(v); };
+      const nums = [];
+      for (let n = min; n <= (min === 0 ? 14 : 15); n++) nums.push(n);
+      const input = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: String(min), placeholder: 'それより多い時はここに入力' });
+      const ok = () => { const v = parseInt(input.value, 10); if (v >= min) done(v); else U.toast('数を入れてください', true); };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+      close = U.modal(h('div', null,
+        h('h2', null, (title ? title + ' の' : '') + '個数'),
+        h('div', { class: 'qtypad' }, nums.map((n) => h('button', { class: 'qtybtn' + (n === current ? ' on' : ''), onclick: () => done(n) }, String(n)))),
+        h('div', { class: 'toolrow flush' }, input, h('button', { class: 'btn primary', onclick: ok }, 'この数にする')),
+        h('div', { class: 'modal-btns' }, h('button', { class: 'btn', onclick: () => done(null) }, 'やめる'))));
+    });
+  };
+
   // 画像 → 縮小した dataURL
   function loadImage(file) {
     return new Promise((resolve, reject) => {
