@@ -47,6 +47,35 @@
     };
     drawRegions();
 
+    // ---- タップで自動的に囲む（segment.js があれば）。下準備は裏で進め、済むまでは指で囲む方法だけ ----
+    const HINT_DRAW = '登録したい品を、指でなぞって四角く囲んでください';
+    let seg = null, segBusy = false;
+    if (window.Segment) {
+      hint.textContent = HINT_DRAW + '（タップで自動的に囲む機能を準備中…）';
+      window.Segment.prepare(img.src).then((s) => {
+        seg = s;
+        if (!sheet.firstChild) hint.textContent = '品をタップすると自動で囲みます。指でなぞって囲むこともできます（準備 ' + s.prepSec + '秒・' + window.Segment.info + '）';
+      }).catch((e) => { hint.textContent = HINT_DRAW + '（自動で囲む機能は使えません: ' + (e && e.message || e) + '）'; });
+    }
+    const setLive = (r) => { live.style.cssText = 'left:' + r.x * 100 + '%;top:' + r.y * 100 + '%;width:' + r.w * 100 + '%;height:' + r.h * 100 + '%'; };
+    async function tapAt(p) {
+      if (!seg) { live.remove(); live = null; if (window.Segment) U.toast('自動で囲む機能を準備中です。指でなぞって囲むこともできます'); return; }
+      if (segBusy) { live.remove(); live = null; return; }
+      segBusy = true;
+      live.classList.add('thinking');
+      setLive({ x: Math.max(0, p.x - 0.03), y: Math.max(0, p.y - 0.03), w: 0.06, h: 0.06 });
+      try {
+        const res = await seg.tap(p.x, p.y);
+        if (!res.cands.length) { live.remove(); live = null; U.toast('うまく囲めませんでした。指でなぞって囲んでください', true); return; }
+        live.classList.remove('thinking');
+        setLive(res.cands[res.best]);
+        openSheet(res.cands[res.best], { cands: res.cands, idx: res.best });
+      } catch (e) {
+        if (live) { live.remove(); live = null; }
+        U.toast('自動で囲めませんでした: ' + (e && e.message || e), true);
+      } finally { segBusy = false; }
+    }
+
     // ---- なぞって囲む ----
     let start = null, live = null;
     const pos = (e) => {
@@ -72,21 +101,33 @@
       const r = rectOf(start, pos(e));
       start = null;
       const b = pic.getBoundingClientRect();
-      if (r.w * b.width < 24 || r.h * b.height < 24) { live.remove(); live = null; return; } // 小さすぎる＝誤タップ
+      if (r.w * b.width < 24 || r.h * b.height < 24) { tapAt(pos(e)); return; } // ほとんど動いていない＝タップ
       openSheet(r);
     };
     stage.addEventListener('pointerup', finish);
     stage.addEventListener('pointercancel', () => { start = null; if (live) { live.remove(); live = null; } });
 
     // ---- 囲んだ品の名前と個数を決める ----
-    function openSheet(r) {
+    // ctx: タップで囲んだ時の枠の候補 { cands, idx } と、枠を切り替えた時に引き継ぐ入力 { keep }
+    function openSheet(r, ctx) {
       hint.hidden = true;
+      sheet.innerHTML = '';
+      const keep = (ctx && ctx.keep) || {};
       const crop = cropCanvas(img, r, 800);
       crop.className = 'pf-crop';
-      const name = h('input', { class: 'input', type: 'text', placeholder: '品名（下から選ぶか入力）' });
-      const note = h('input', { class: 'input', type: 'text', placeholder: '色・柄など（任意）' });
-      let qty = 1, consumable = false;
-      const qtyEl = h('button', { class: 'step-n', onclick: async () => { const v = await U.qtyPad(name.value.trim(), qty, { min: 1 }); if (v != null) { qty = v; qtyEl.textContent = String(qty); } } }, '1');
+      const name = h('input', { class: 'input', type: 'text', placeholder: '品名（下から選ぶか入力）', value: keep.name || '' });
+      const note = h('input', { class: 'input', type: 'text', placeholder: '色・柄など（任意）', value: keep.note || '' });
+      let qty = keep.qty || 1, consumable = !!keep.consumable;
+      // 自動で囲んだ枠が違う時: 候補（狭い順）を「狭く」「広く」で切り替える。入力した内容は引き継ぐ
+      const resize = (ctx && ctx.cands && ctx.cands.length > 1) ? h('div', { class: 'pf-resize' },
+        h('span', { class: 'sub' }, '枠が違う時 →'),
+        h('button', { class: 'btn small', disabled: ctx.idx <= 0, onclick: () => swap(ctx.idx - 1) }, '狭く'),
+        h('button', { class: 'btn small', disabled: ctx.idx >= ctx.cands.length - 1, onclick: () => swap(ctx.idx + 1) }, '広く')) : null;
+      function swap(i) {
+        setLive(ctx.cands[i]);
+        openSheet(ctx.cands[i], { cands: ctx.cands, idx: i, keep: { name: name.value, note: note.value, qty: qty, consumable: consumable } });
+      }
+      const qtyEl = h('button', { class: 'step-n', onclick: async () => { const v = await U.qtyPad(name.value.trim(), qty, { min: 1 }); if (v != null) { qty = v; qtyEl.textContent = String(qty); } } }, String(qty));
       const chips = h('div', { class: 'chips pf-chips' });
       const cats = h('div', { class: 'chips cats pf-chips' });
       const drawChips = () => {
@@ -141,6 +182,7 @@
                 h('button', { class: 'step', onclick: () => { qty = Math.max(1, qty - 1); qtyEl.textContent = String(qty); } }, '−'), qtyEl,
                 h('button', { class: 'step', onclick: () => { qty++; qtyEl.textContent = String(qty); } }, '＋')),
               aiBtn))),
+        resize,
         // 決定ボタンは品名の一覧より上に置く（スマホで一覧の下に隠れないように）
         h('div', { class: 'modal-btns pf-btns' },
           h('button', { class: 'btn', onclick: close }, '囲み直す'),

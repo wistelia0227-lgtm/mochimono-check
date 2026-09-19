@@ -1,10 +1,10 @@
 // オフラインでも開けるようにアプリ本体をキャッシュする。データ(IndexedDB)には触れない。
 // ファイルを更新したら VERSION を上げる（古いキャッシュが捨てられる）。
-const VERSION = 'mochimono-v0.8';
+const VERSION = 'mochimono-v0.9';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/util.js', 'js/db.js', 'js/master.js', 'js/model.js', 'js/app.js',
-  'modules/stay.js', 'modules/residents.js', 'modules/search.js', 'modules/settings.js', 'modules/print.js', 'modules/pickfrom.js', 'modules/camera.js', 'modules/namepick.js', 'modules/outfit.js', 'modules/lab.js', 'modules/devtools.js',
+  'modules/stay.js', 'modules/residents.js', 'modules/search.js', 'modules/settings.js', 'modules/print.js', 'modules/pickfrom.js', 'modules/segment.js', 'modules/camera.js', 'modules/namepick.js', 'modules/outfit.js', 'modules/lab.js', 'modules/devtools.js',
   'icons/icon-192.png', 'icons/icon-512.png'
 ];
 
