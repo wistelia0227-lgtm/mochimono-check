@@ -38,14 +38,24 @@
       hint, stage, sheet);
     document.body.appendChild(bg);
 
+    // 自動で見つけた枠の候補（点線）。登録済みの枠と大きく重なる候補は「使用済み」として出さない
+    let auto = [], showAuto = true;
+    const overlap = (a, b) => {
+      const i = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+      return i / (a.w * a.h + b.w * b.h - i);
+    };
+    const freeAuto = () => auto.filter((c) => !ref.regions.some((g) => overlap(c, g) > 0.5));
+    const boxStyle = (g) => 'left:' + g.x * 100 + '%;top:' + g.y * 100 + '%;width:' + g.w * 100 + '%;height:' + g.h * 100 + '%';
     const drawRegions = () => {
       layer.innerHTML = '';
+      if (showAuto) freeAuto().forEach((c) => layer.appendChild(h('div', { class: 'pf-box cand', style: boxStyle(c) })));
       ref.regions.forEach((g) => {
-        layer.appendChild(h('div', { class: 'pf-box done', style: 'left:' + g.x * 100 + '%;top:' + g.y * 100 + '%;width:' + g.w * 100 + '%;height:' + g.h * 100 + '%' },
-          h('span', { class: 'pf-label' }, g.label)));
+        layer.appendChild(h('div', { class: 'pf-box done', style: boxStyle(g) }, h('span', { class: 'pf-label' }, g.label)));
       });
     };
     drawRegions();
+    const autoBtn = h('button', { class: 'btn small', hidden: true, onclick: () => { showAuto = !showAuto; autoBtn.textContent = showAuto ? '候補を隠す' : '候補を出す'; drawRegions(); } }, '候補を隠す');
+    bg.querySelector('.pf-head').insertBefore(autoBtn, bg.querySelector('.pf-head').lastChild);
 
     // ---- タップで自動的に囲む（segment.js があれば）。下準備は裏で進め、済むまでは指で囲む方法だけ ----
     const HINT_DRAW = '登録したい品を、指でなぞって四角く囲んでください';
@@ -54,11 +64,30 @@
       hint.textContent = HINT_DRAW + '（タップで自動的に囲む機能を準備中…）';
       window.Segment.prepare(img.src).then((s) => {
         seg = s;
-        if (!sheet.firstChild) hint.textContent = '品をタップすると自動で囲みます。指でなぞって囲むこともできます（準備 ' + s.prepSec + '秒・' + window.Segment.info + '）';
+        const READY = '品をタップすると自動で囲みます。指でなぞって囲むこともできます（準備 ' + s.prepSec + '秒・' + window.Segment.info + '）';
+        if (!sheet.firstChild) hint.textContent = READY;
+        // 続けて、写真の中の品を自動で探して候補の枠を出す（人のタップが来たらそちらを優先）
+        const t1 = performance.now();
+        s.propose({
+          shouldPause: () => segBusy,
+          onProgress: (p) => { if (!sheet.firstChild) hint.textContent = READY + '　品を自動で探しています… ' + Math.round(p * 100) + '%'; }
+        }).then((boxes) => {
+          if (!bg.isConnected) return;
+          auto = boxes;
+          autoBtn.hidden = !boxes.length;
+          if (!sheet.firstChild && !live) drawRegions();
+          const msg = boxes.length
+            ? '点線の枠が ' + boxes.length + ' 個見つかりました。登録したい枠をタップしてください。枠が無い品はその上をタップ、または指でなぞって囲めます'
+            : '品を自動では見つけられませんでした。品をタップするか、指でなぞって囲んでください';
+          if (!sheet.firstChild) hint.textContent = msg + '（探索 ' + ((performance.now() - t1) / 1000).toFixed(0) + '秒）';
+        }).catch((e) => { if (!sheet.firstChild) hint.textContent = READY + '（自動で探す機能は使えませんでした: ' + (e && e.message || e) + '）'; });
       }).catch((e) => { hint.textContent = HINT_DRAW + '（自動で囲む機能は使えません: ' + (e && e.message || e) + '）'; });
     }
     const setLive = (r) => { live.style.cssText = 'left:' + r.x * 100 + '%;top:' + r.y * 100 + '%;width:' + r.w * 100 + '%;height:' + r.h * 100 + '%'; };
     async function tapAt(p) {
+      // 自動で見つけた候補の枠の中をタップしたら、その枠を使う（重なっていれば小さい順。「狭く／広く」で切り替え）
+      const hits = showAuto ? freeAuto().filter((c) => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h).sort((a, b) => a.w * a.h - b.w * b.h) : [];
+      if (hits.length) { setLive(hits[0]); openSheet(hits[0], { cands: hits, idx: 0 }); return; }
       if (!seg) { live.remove(); live = null; if (window.Segment) U.toast('自動で囲む機能を準備中です。指でなぞって囲むこともできます'); return; }
       if (segBusy) { live.remove(); live = null; return; }
       segBusy = true;
@@ -146,7 +175,7 @@
           h('button', { class: 'chip item' + (name.value === m.name ? ' has' : ''), onclick: () => { name.value = m.name; consumable = m.consumable; drawChips(); } }, m.name)));
       };
       drawChips();
-      const close = () => { sheet.innerHTML = ''; if (live) { live.remove(); live = null; } hint.hidden = false; };
+      const close = () => { sheet.innerHTML = ''; if (live) { live.remove(); live = null; } hint.hidden = false; drawRegions(); };
 
       const aiBtn = h('button', { class: 'btn small' }, '✨ AIに品名を聞く');
       aiBtn.hidden = true;
