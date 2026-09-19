@@ -71,6 +71,13 @@
       } catch (e) { log('WebGPU: 取得時にエラー ' + e.message); }
     }
     log('モデルの保存: ' + ((await Lab.cached()) ? '済み' : 'まだ'));
+    // 「タップで自動的に囲む」機能の記録（同じ起動中に写真の画面で使った分）。実機でしか分からない不具合の報告用
+    if (window.Segment) {
+      let saved = '';
+      try { saved = localStorage.getItem('mochimono.segcfg.v1') || 'なし'; } catch (e) { saved = '読めない'; }
+      log('■ タップで囲む機能: 覚えている設定=' + saved + (window.Segment.log.length ? '' : '（この起動中はまだ使っていません）'));
+      window.Segment.log.forEach((l) => log('  ' + l));
+    }
   };
 
 

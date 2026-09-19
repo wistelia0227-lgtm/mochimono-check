@@ -66,13 +66,22 @@
       setLive({ x: Math.max(0, p.x - 0.03), y: Math.max(0, p.y - 0.03), w: 0.06, h: 0.06 });
       try {
         const res = await seg.tap(p.x, p.y);
-        if (!res.cands.length) { live.remove(); live = null; U.toast('うまく囲めませんでした。指でなぞって囲んでください', true); return; }
+        if (!res.cands.length) {
+          live.remove(); live = null;
+          U.toast('うまく囲めませんでした。指でなぞって囲んでください', true);
+          // 何が起きたかを画面に残す（実機でしか分からない不具合を報告してもらうため）
+          hint.hidden = false;
+          hint.textContent = '自動で囲めませんでした。指でなぞって囲んでください。［診断: ' + seg.diag + '］';
+          return;
+        }
         live.classList.remove('thinking');
         setLive(res.cands[res.best]);
         openSheet(res.cands[res.best], { cands: res.cands, idx: res.best });
       } catch (e) {
         if (live) { live.remove(); live = null; }
         U.toast('自動で囲めませんでした: ' + (e && e.message || e), true);
+        hint.hidden = false;
+        hint.textContent = '自動で囲めませんでした。指でなぞって囲んでください。［エラー: ' + (e && e.message || e) + '］';
       } finally { segBusy = false; }
     }
 
