@@ -44,7 +44,9 @@
       const i = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
       return i / (a.w * a.h + b.w * b.h - i);
     };
-    const freeAuto = () => auto.filter((c) => !ref.regions.some((g) => overlap(c, g) > 0.5));
+    const insideOf = (a, b) => (Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))) / (a.w * a.h);
+    // 登録済みの枠と大きく重なる候補、登録済みの枠の中にほぼ収まる候補（くっつけて登録した元の枠など）は出さない
+    const freeAuto = () => auto.filter((c) => !ref.regions.some((g) => overlap(c, g) > 0.5 || insideOf(c, g) > 0.7));
     const boxStyle = (g) => 'left:' + g.x * 100 + '%;top:' + g.y * 100 + '%;width:' + g.w * 100 + '%;height:' + g.h * 100 + '%';
     const drawRegions = () => {
       layer.innerHTML = '';
@@ -84,7 +86,28 @@
       }).catch((e) => { hint.textContent = HINT_DRAW + '（自動で囲む機能は使えません: ' + (e && e.message || e) + '）'; });
     }
     const setLive = (r) => { live.style.cssText = 'left:' + r.x * 100 + '%;top:' + r.y * 100 + '%;width:' + r.w * 100 + '%;height:' + r.h * 100 + '%'; };
+    // 登録済みの枠の取り消し: その枠で足した分だけ品の個数を戻し、切り抜いた写真も消す
+    async function undoRegion(g) {
+      if (!(await U.confirm('「' + g.label + '」の登録を取り消しますか？', { okLabel: '取り消す', danger: true }))) return;
+      const it = stay.items.find((i) => i.id === g.itemId);
+      let drop = g.photoId ? [g.photoId] : [];
+      if (it) {
+        const q = g.qty || 1;
+        if (it.qty > q) { it.qty -= q; if (g.photoId) it.photos = it.photos.filter((ph) => ph.id !== g.photoId); }
+        else { drop = it.photos.map((ph) => ph.id); stay.items.splice(stay.items.indexOf(it), 1); }
+      }
+      ref.regions.splice(ref.regions.indexOf(g), 1);
+      await DB.put('stays', stay);
+      await DB.dropPhotosIfUnused(drop);
+      added = Math.max(0, added - 1);
+      hint.hidden = false;
+      hint.textContent = '「' + g.label + '」の登録を取り消しました';
+      drawRegions();
+    }
+
     async function tapAt(p) {
+      const doneHit = ref.regions.filter((g) => p.x >= g.x && p.x <= g.x + g.w && p.y >= g.y && p.y <= g.y + g.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+      if (doneHit) { live.remove(); live = null; undoRegion(doneHit); return; }
       // 自動で見つけた候補の枠の中をタップしたら、その枠を使う（重なっていれば小さい順。「狭く／広く」で切り替え）
       const hits = showAuto ? freeAuto().filter((c) => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h).sort((a, b) => a.w * a.h - b.w * b.h) : [];
       if (hits.length) { setLive(hits[0]); openSheet(hits[0], { cands: hits, idx: 0 }); return; }
@@ -121,8 +144,9 @@
       return { x: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), y: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)) };
     };
     const rectOf = (a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+    let activeSheet = null, mergeStart = null;
     stage.addEventListener('pointerdown', (e) => {
-      if (sheet.firstChild) return; // 入力中は新しく囲まない
+      if (sheet.firstChild) { mergeStart = pos(e); return; } // 入力中は新しく囲まない（別の点線の枠をタップしたら、今の枠にくっつける）
       start = pos(e);
       live = h('div', { class: 'pf-box' });
       layer.appendChild(live);
@@ -135,6 +159,15 @@
       live.style.cssText = 'left:' + r.x * 100 + '%;top:' + r.y * 100 + '%;width:' + r.w * 100 + '%;height:' + r.h * 100 + '%';
     });
     const finish = (e) => {
+      if (mergeStart && activeSheet) {
+        const p = pos(e), moved = Math.abs(p.x - mergeStart.x) + Math.abs(p.y - mergeStart.y);
+        mergeStart = null;
+        if (moved < 0.03 && showAuto) {
+          const c = freeAuto().filter((k) => p.x >= k.x && p.x <= k.x + k.w && p.y >= k.y && p.y <= k.y + k.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+          if (c) activeSheet.merge(c);
+        }
+        return;
+      }
       if (!start) return;
       const r = rectOf(start, pos(e));
       start = null;
@@ -151,8 +184,50 @@
       hint.hidden = true;
       sheet.innerHTML = '';
       const keep = (ctx && ctx.keep) || {};
-      const crop = cropCanvas(img, r, 800);
+      let cur = { x: r.x, y: r.y, w: r.w, h: r.h }; // 今の枠。角を引っぱる・動かす・くっつけるで変わる
+      const crop = document.createElement('canvas');
       crop.className = 'pf-crop';
+      const recrop = () => { const c = cropCanvas(img, cur, 800); crop.width = c.width; crop.height = c.height; crop.getContext('2d').drawImage(c, 0, 0); };
+      recrop();
+      // 枠の四隅のつまみで大きさを、枠の中をつかんで位置を直せる
+      const dragBy = (el, kind) => el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        const s = pos(e), r0 = { x: cur.x, y: cur.y, w: cur.w, h: cur.h };
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 無視 */ }
+        const mv = (ev) => {
+          const q = pos(ev), dx = q.x - s.x, dy = q.y - s.y;
+          let x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
+          if (kind === 'move') { const mx = Math.max(-x0, Math.min(1 - x1, dx)), my = Math.max(-y0, Math.min(1 - y1, dy)); x0 += mx; x1 += mx; y0 += my; y1 += my; }
+          else {
+            if (kind.indexOf('w') >= 0) x0 = Math.max(0, Math.min(x1 - 0.03, x0 + dx));
+            if (kind.indexOf('e') >= 0) x1 = Math.min(1, Math.max(x0 + 0.03, x1 + dx));
+            if (kind.indexOf('n') >= 0) y0 = Math.max(0, Math.min(y1 - 0.03, y0 + dy));
+            if (kind.indexOf('s') >= 0) y1 = Math.min(1, Math.max(y0 + 0.03, y1 + dy));
+          }
+          cur = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+          setLive(cur);
+        };
+        const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); recrop(); };
+        el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      });
+      if (live) {
+        // 枠の要素は作り直す（「狭く／広く」で開き直した時に、前の枠の古い操作が残らないように）
+        const fresh = h('div', { class: 'pf-box edit' });
+        live.replaceWith(fresh);
+        live = fresh;
+        setLive(cur);
+        ['nw', 'ne', 'sw', 'se'].forEach((k) => { const hd = h('div', { class: 'pf-handle ' + k }); live.appendChild(hd); dragBy(hd, k); });
+        dragBy(live, 'move');
+      }
+      // 別の点線の枠をタップ → 今の枠とくっつけて1つにする（刃と柄のように割れて出た時用）
+      activeSheet = {
+        merge: (c) => {
+          const x0 = Math.min(cur.x, c.x), y0 = Math.min(cur.y, c.y), x1 = Math.max(cur.x + cur.w, c.x + c.w), y1 = Math.max(cur.y + cur.h, c.y + c.h);
+          cur = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+          setLive(cur); recrop();
+          U.toast('枠をくっつけました');
+        }
+      };
       const name = h('input', { class: 'input', type: 'text', placeholder: '品名（下から選ぶか入力）', value: keep.name || '' });
       const note = h('input', { class: 'input', type: 'text', placeholder: '色・柄など（任意）', value: keep.note || '' });
       let qty = keep.qty || 1, consumable = !!keep.consumable;
@@ -175,7 +250,7 @@
           h('button', { class: 'chip item' + (name.value === m.name ? ' has' : ''), onclick: () => { name.value = m.name; consumable = m.consumable; drawChips(); } }, m.name)));
       };
       drawChips();
-      const close = () => { sheet.innerHTML = ''; if (live) { live.remove(); live = null; } hint.hidden = false; drawRegions(); };
+      const close = () => { activeSheet = null; sheet.innerHTML = ''; if (live) { live.remove(); live = null; } hint.hidden = false; drawRegions(); };
 
       const aiBtn = h('button', { class: 'btn small' }, '✨ AIに品名を聞く');
       aiBtn.hidden = true;
@@ -198,13 +273,15 @@
       const add = async () => {
         const nm = name.value.trim();
         if (!nm) { U.toast('品名を選ぶか入力してください', true); return; }
+        const r = cur; // 直した後の枠で登録する
         const thumb = cropCanvas(img, r, 160).toDataURL('image/jpeg', 0.7);
         const pref = await U.storePhoto(crop.toDataURL('image/jpeg', 0.85), thumb);
         const it = Model.addItem(stay, { name: nm, cat: curCat.name, consumable: consumable, qty: qty, note: note.value.trim(), photos: [pref] });
         if (!it.photos.some((p) => p.id === pref.id)) it.photos.push(pref); // 既にある品に足された場合も写真は付ける
-        ref.regions.push({ x: r.x, y: r.y, w: r.w, h: r.h, itemId: it.id, label: nm + (qty > 1 ? ' ×' + qty : '') });
+        ref.regions.push({ x: r.x, y: r.y, w: r.w, h: r.h, itemId: it.id, qty: qty, photoId: pref.id, label: nm + (qty > 1 ? ' ×' + qty : '') });
         await DB.put('stays', stay);
         added++;
+        activeSheet = null;
         live = null;
         sheet.innerHTML = '';
         hint.hidden = false;
@@ -221,6 +298,7 @@
                 h('button', { class: 'step', onclick: () => { qty++; qtyEl.textContent = String(qty); } }, '＋')),
               aiBtn))),
         resize,
+        h('div', { class: 'sub pf-tip' }, '枠の角を引っぱると大きさを、枠の中をつかむと位置を直せます。別の点線の枠をタップすると、この枠にくっつきます。'),
         // 決定ボタンは品名の一覧より上に置く（スマホで一覧の下に隠れないように）
         h('div', { class: 'modal-btns pf-btns' },
           h('button', { class: 'btn', onclick: close }, '囲み直す'),

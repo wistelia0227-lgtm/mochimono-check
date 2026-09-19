@@ -235,6 +235,11 @@ select.input { width: auto; max-width: 100%; }
 .pf-layer { position: absolute; inset: 0; }
 .pf-box { position: absolute; border: 3px solid #f59e0b; background: rgba(245, 158, 11, .18); border-radius: 4px; box-sizing: border-box; }
 .pf-box.done { border-color: var(--primary); background: rgba(15, 118, 110, .16); }
+.pf-box.edit { cursor: move; touch-action: none; }
+.pf-handle { position: absolute; width: 30px; height: 30px; border-radius: 50%; background: #f59e0b; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); touch-action: none; }
+.pf-handle.nw { left: -15px; top: -15px; cursor: nwse-resize; } .pf-handle.ne { right: -15px; top: -15px; cursor: nesw-resize; }
+.pf-handle.sw { left: -15px; bottom: -15px; cursor: nesw-resize; } .pf-handle.se { right: -15px; bottom: -15px; cursor: nwse-resize; }
+.pf-tip { margin-top: 6px; }
 .pf-box.cand { border: 2px dashed #38bdf8; background: rgba(56, 189, 248, .10); }
 .pf-box.thinking { border-style: dashed; animation: pf-pulse .7s infinite alternate; }
 @keyframes pf-pulse { from { opacity: .35; } to { opacity: 1; } }
