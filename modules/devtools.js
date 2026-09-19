@@ -136,6 +136,13 @@
       await DB.dropPhotosIfUnused([ref.id]);
       eq('未使用の写真は消える', !!(await DB.get('photos', ref.id)), false);
 
+      eq('古いデータにも服装の欄が補われる', Model.normalizeStay({ id: 'y' }).outfitIn, { photos: [], note: '' });
+      const oref = await fakePhoto('o', '#ddd');
+      Model.normalizeStay(s2).outfitOut.photos.push(oref);
+      await DB.put('stays', s2);
+      await DB.dropPhotosIfUnused([oref.id]);
+      eq('服装の写真は使用中として残る', !!(await DB.get('photos', oref.id)), true);
+
       const dump = await window.Backup.exportData();
       eq('バックアップの件数', [dump.residents.length, dump.stays.length], [1, 2]);
       await DB.clear('stays');

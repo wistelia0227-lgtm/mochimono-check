@@ -34,6 +34,12 @@
     if (!st.items) st.items = [];
     if (!st.photos) st.photos = [];
     if (!Model.STATUS[st.status]) st.status = 'checkin';
+    // 服装の記録（任意）。来所時=outfitIn / 退所時=outfitOut。古いデータには無いので補う
+    ['outfitIn', 'outfitOut'].forEach((k) => {
+      if (!st[k]) st[k] = { photos: [], note: '' };
+      if (!st[k].photos) st[k].photos = [];
+      if (st[k].note == null) st[k].note = '';
+    });
     st.items.forEach((it) => {
       if (!it.photos) it.photos = [];
       if (typeof it.qty !== 'number' || isNaN(it.qty)) it.qty = 1;
@@ -148,6 +154,7 @@
   Model.stayPhotoIds = function (st) {
     const ids = (st.photos || []).map((p) => p.id);
     (st.items || []).forEach((it) => (it.photos || []).forEach((p) => ids.push(p.id)));
+    ['outfitIn', 'outfitOut'].forEach((k) => ((st[k] && st[k].photos) || []).forEach((p) => ids.push(p.id)));
     return ids;
   };
 

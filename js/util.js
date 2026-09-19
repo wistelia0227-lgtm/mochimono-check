@@ -115,7 +115,9 @@
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
       close = U.modal(h('div', null,
         h('h2', null, (title ? title + ' の' : '') + '個数'),
-        h('div', { class: 'qtypad' }, nums.map((n) => h('button', { class: 'qtybtn' + (n === current ? ' on' : ''), onclick: () => done(n) }, String(n)))),
+        h('div', { class: 'qtypad' }, nums.map((n) => h('button', {
+          class: 'qtybtn' + (n === current ? ' on' : '') + (n === 0 && opts && opts.zeroLabel ? ' zero' : ''), onclick: () => done(n)
+        }, (n === 0 && opts && opts.zeroLabel) ? '0 ' + opts.zeroLabel : String(n)))),
         h('div', { class: 'toolrow flush' }, input, h('button', { class: 'btn primary', onclick: ok }, 'この数にする')),
         h('div', { class: 'modal-btns' }, h('button', { class: 'btn', onclick: () => done(null) }, 'やめる'))));
     });

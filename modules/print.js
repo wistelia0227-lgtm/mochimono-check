@@ -58,6 +58,7 @@
     const lines = showOut ? Model.problemLines(stay) : [];
     if (lines.length) sheet.appendChild(h('div', { class: 'sheet-note' }, h('b', null, '確認事項'), lines.map((l) => h('div', null, '・' + l))));
     if (stay.memo) sheet.appendChild(h('div', { class: 'sheet-note' }, h('b', null, 'メモ'), h('div', null, stay.memo)));
+    if (window.Outfit) { const ob = window.Outfit.printBlock(stay); if (ob) sheet.appendChild(ob); }
 
     sheet.appendChild(h('table', { class: 'sheet-sign' }, h('tbody', null,
       h('tr', null, h('th', null, '入所時 確認者'), h('td', null, (stay.checkInBy || '') + '　' + U.fmtDateTime(stay.checkInAt)),

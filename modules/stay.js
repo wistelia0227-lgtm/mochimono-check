@@ -62,6 +62,9 @@
           '　退所時確認：' + (stay.checkOutBy || '—') + ' ' + U.fmtDateTime(stay.checkOutAt))));
     }
 
+    // ---- 服装の記録（任意。モジュールがあれば） ----
+    if (window.Outfit) { const oc = window.Outfit.card(stay, mode); if (oc) root.appendChild(oc); }
+
     // ---- 荷物全体の写真 ----
     root.appendChild(h('div', { class: 'card' },
       h('div', { class: 'card-title' }, '荷物全体の写真'),
@@ -167,14 +170,32 @@
     }
 
     // 数字そのものを押すと個数パッドが開く（−＋を何度も押さなくて済むように）
-    function stepper(value, onChange, min, title) {
+    // onRemove があると、個数1の時の「−」が「外す」になり、個数パッドにも「0（外す）」が出る
+    function stepper(value, onChange, min, title, onRemove) {
+      const atMin = value <= min;
       return h('div', { class: 'stepper' },
-        h('button', { class: 'step', disabled: value <= min, onclick: () => onChange(value - 1) }, '−'),
+        (atMin && onRemove)
+          ? h('button', { class: 'step step-del', title: 'リストから外す', onclick: onRemove }, '🗑')
+          : h('button', { class: 'step', disabled: atMin, onclick: () => onChange(value - 1) }, '−'),
         h('button', {
           class: 'step-n', title: '個数を直接選ぶ',
-          onclick: async () => { const v = await U.qtyPad(title, value, { min: min }); if (v != null && v !== value) onChange(v); }
+          onclick: async () => {
+            const v = await U.qtyPad(title, value, { min: onRemove ? 0 : min, zeroLabel: onRemove ? '外す' : null });
+            if (v == null || v === value) return;
+            if (v === 0 && onRemove) onRemove(); else onChange(v);
+          }
         }, String(value)),
         h('button', { class: 'step', onclick: () => onChange(value + 1) }, '＋'));
+    }
+
+    // 品をリストから外す（誤操作で消えないよう確認を1回はさむ）
+    async function removeItem(it) {
+      const extra = it.photos.length ? '（写真 ' + it.photos.length + ' 枚も消えます）' : '';
+      if (!(await U.confirm('「' + it.name + '」をリストから外しますか？' + extra, { okLabel: '外す', danger: true }))) return;
+      stay.items.splice(stay.items.indexOf(it), 1);
+      await saveQuiet();
+      await DB.dropPhotosIfUnused(it.photos.map((p) => p.id));
+      App.refresh();
     }
 
     function itemRow(it) {
@@ -206,7 +227,7 @@
       let ctl;
       if (mode === 'checkin' || mode === 'staying') {
         ctl = h('div', { class: 'item-ctl' },
-          stepper(it.qty, (v) => { it.qty = v; it.inChecked = true; save(); }, 1, it.name),
+          stepper(it.qty, (v) => { it.qty = v; it.inChecked = true; save(); }, 1, it.name, () => removeItem(it)),
           !it.inChecked ? h('button', { class: 'btn small primary', onclick: () => { it.inChecked = true; save(); } }, '持参あり') : null);
       } else if (mode === 'checkout') {
         const cur = it.outQty == null ? it.qty : it.outQty;

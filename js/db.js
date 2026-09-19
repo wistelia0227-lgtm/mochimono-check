@@ -54,10 +54,8 @@
   DB.dropPhotosIfUnused = async function (ids) {
     if (!ids || !ids.length) return;
     const used = new Set();
-    (await DB.getAll('stays')).forEach((st) => {
-      (st.photos || []).forEach((p) => used.add(p.id));
-      (st.items || []).forEach((it) => (it.photos || []).forEach((p) => used.add(p.id)));
-    });
+    // 参照の数え方は Model.stayPhotoIds に一本化（荷物全体・品・服装の写真）。数え漏れると使用中の写真が消える
+    (await DB.getAll('stays')).forEach((st) => window.Model.stayPhotoIds(st).forEach((id) => used.add(id)));
     for (const id of ids) if (!used.has(id)) await DB.del('photos', id);
   };
 
